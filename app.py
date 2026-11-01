@@ -1,27 +1,23 @@
 import os
-import json
 import gc
+import json
 import urllib.request
+import requests
+import numpy as np
 from PIL import Image
 
 import torch
 import torch.nn as nn
 from torchvision import models, transforms
 import librosa
-import librosa.display
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-import numpy as np
-import requests
 import gradio as gr
 
-# Limit threads to keep memory footprint low on Render free tier
+# Force PyTorch to use minimal memory
 torch.set_num_threads(1)
 torch.set_grad_enabled(False)
 
 # -------------------------------------------------------------
-# 1. AUTO-DOWNLOAD WEIGHTS & LABELS FROM GITHUB RELEASE
+# 1. DOWNLOAD WEIGHTS & LABELS
 # -------------------------------------------------------------
 WEIGHTS_FILE = "model_weights.pt"
 LABELS_FILE = "labels.json"
@@ -35,7 +31,7 @@ def download_if_missing():
     urllib.request.install_opener(opener)
     
     if not os.path.exists(WEIGHTS_FILE):
-        print("Downloading pure PyTorch model weights...")
+        print("Downloading PyTorch model weights...")
         urllib.request.urlretrieve(WEIGHTS_URL, WEIGHTS_FILE)
         
     if not os.path.exists(LABELS_FILE):
@@ -47,11 +43,14 @@ download_if_missing()
 with open(LABELS_FILE, "r") as f:
     class_names = json.load(f)
 
-# Recreate architecture and load state_dict cleanly
+# Initialize ResNet18 without downloading unnecessary default weights
 model = models.resnet18(weights=None)
 model.fc = nn.Linear(model.fc.in_features, len(class_names))
-model.load_state_dict(torch.load(WEIGHTS_FILE, map_location="cpu"))
+state = torch.load(WEIGHTS_FILE, map_location="cpu")
+model.load_state_dict(state)
 model.eval()
+del state
+gc.collect()
 
 img_transforms = transforms.Compose([
     transforms.Resize((224, 224)),
@@ -60,18 +59,17 @@ img_transforms = transforms.Compose([
 ])
 
 # -------------------------------------------------------------
-# 2. DR. INFO (GEMINI LIVE CHATBOT VIA DIRECT REST API)
+# 2. DR. INFO (GEMINI API CHATBOT)
 # -------------------------------------------------------------
 gemini_api_key = os.environ.get("GEMINI_API_KEY")
 
 SYSTEM_INSTRUCTION = """
-You are 'Dr. Info', the clinical triage assistant for StethoLogic (stethologic.com).
-Your goals:
-- Discuss cough sounds, lung sounds (wheezing, coarse crackles, stridor, voluntary coughs), and respiratory recovery tips.
-- Explain conditions like Bronchitis, Pneumonia, Asthma, Whooping Cough, Voluntary/Simulated Cough, and Normal breath sounds clearly.
-- Always respond in whatever language the user asks in (English, Hindi, Tamil, Telugu, Hinglish, etc.).
-- Maintain clear boundaries: you give helpful triage guidance, not an authoritative medical prescription.
-- Always urge immediate in-person emergency care if danger signs exist (shortness of breath at rest, blood in sputum, chest pain, high fever >3 days).
+You are 'Dr. Info', clinical triage assistant for StethoLogic (stethologic.com).
+- Discuss cough sounds, lung sounds (wheezing, coarse crackles, voluntary coughs), and respiratory tips.
+- Explain conditions (Bronchitis, Pneumonia, Asthma, Whooping Cough, Voluntary Cough, Normal) clearly.
+- Reply in whatever language the user asks (English, Hindi, Tamil, Telugu, etc.).
+- Maintain clear boundaries: give triage guidance, not an authoritative medical prescription.
+- Urge immediate emergency care if danger signs exist (shortness of breath at rest, blood in sputum, chest pain, high fever).
 - Mention partner services (ordering medicine or consulting an online doctor) when helpful.
 - Keep answers warm, encouraging, concise, and structured with bullet points.
 """
@@ -113,7 +111,7 @@ def dynamic_chat(message, history):
         return f"Service temporarily busy. Please try again shortly. (Error: {str(e)})"
 
 # -------------------------------------------------------------
-# 3. ACOUSTIC SYMPTOM REASONINGS & LOCALIZATION
+# 3. ACOUSTIC REASONINGS & TRANSLATIONS
 # -------------------------------------------------------------
 SYMPTOM_REASONS = {
     "English": {
@@ -160,8 +158,6 @@ I18N = {
         "audio_label": "Record Cough or Respiration Sound",
         "btn_analyze": "⚡ Analyze Acoustic Signature",
         "partner_header": "### 🏥 Connected Healthcare Services",
-        "btn_pharmacy": "💊 Order Prescriptions",
-        "btn_doctor": "👨‍⚕️ Consult Online Pulmonologist",
         "res_label": "Diagnostic Assessment",
         "why_label": "Acoustic Symptom Breakdown (Why this condition is indicated):",
         "info_bot_cta": "ℹ️ **For more information talk to our Info-Bot (Dr. Info).**",
@@ -179,8 +175,6 @@ I18N = {
         "audio_label": "खांसी या सांस की आवाज रिकॉर्ड करें",
         "btn_analyze": "⚡ ध्वनिक विश्लेषण शुरू करें",
         "partner_header": "### 🏥 पार्टनर स्वास्थ्य सेवाएं",
-        "btn_pharmacy": "💊 दवाइयां ऑर्डर करें",
-        "btn_doctor": "👨‍⚕️ डॉक्टर से परामर्श लें",
         "res_label": "जांच परिणाम",
         "why_label": "ध्वनिक लक्षण विश्लेषण (यह स्थिति क्यों पाई गई):",
         "info_bot_cta": "ℹ️ **For more information talk to our Info-Bot (डॉ. इन्फो से पूछें).**",
@@ -198,8 +192,6 @@ I18N = {
         "audio_label": "இருமல் அல்லது மூச்சு ஒலியைப் பதிவு செய்க",
         "btn_analyze": "⚡ ஒலி பகுப்பாய்வைத் தொடங்கு",
         "partner_header": "### 🏥 கூட்டாளர் மருத்துவச் சேவைகள்",
-        "btn_pharmacy": "💊 மருந்துகளை ஆர்டர் செய்க",
-        "btn_doctor": "👨‍⚕️ மருத்துவரை ஆன்லைனில் அணுகுக",
         "res_label": "பரிசோதனை முடிவு",
         "why_label": "ஒலி அறிகுறிகள் (இந்த நிலை ஏன் கண்டறியப்பட்டது):",
         "info_bot_cta": "ℹ️ **For more information talk to our Info-Bot (டாக்டர் இன்போவிடம் ஆலோசிக்கவும்).**",
@@ -217,8 +209,6 @@ I18N = {
         "audio_label": "దగ్గు లేదా శ్వాస శబ్దాన్ని రికార్డ్ చేయండి",
         "btn_analyze": "⚡ శబ్ద విశ్లేషణను ప్రారంభించండి",
         "partner_header": "### 🏥 భాగస్వామ్య ఆరోగ్య సేవలు",
-        "btn_pharmacy": "💊 మందులను ఆర్డర్ చేయండి",
-        "btn_doctor": "👨‍⚕️ ఆన్‌లైన్ వైద్యుడిని సంప్రదించండి",
         "res_label": "పరీక్ష ఫలితం",
         "why_label": "ధ్వని లక్షణాల వివరణ (ఈ పరిస్థితి ఎందుకు గుర్తించబడింది):",
         "info_bot_cta": "ℹ️ **For more information talk to our Info-Bot (డాక్టర్ ఇన్ఫోని అడగండి).**",
@@ -251,7 +241,7 @@ footer {visibility: hidden !important;}
 """
 
 # -------------------------------------------------------------
-# 4. INFERENCE & REASONING PIPELINE
+# 4. LIGHTWEIGHT INFERENCE PIPELINE (NO MATPLOTLIB)
 # -------------------------------------------------------------
 def analyze_audio(audio_path, language):
     lang_dict = I18N.get(language, I18N["English"])
@@ -266,16 +256,14 @@ def analyze_audio(audio_path, language):
         if np.max(np.abs(signal)) < 0.02:
             return lang_dict["quiet_err"], "", "", None, {}
 
+        # Mel Spectrogram converted to 8-bit image without matplotlib
         mel = librosa.feature.melspectrogram(y=signal, sr=sr, n_mels=128, fmax=8000)
         mel_db = librosa.power_to_db(mel, ref=np.max)
+        mel_norm = ((mel_db - mel_db.min()) / (mel_db.max() - mel_db.min() + 1e-6) * 255).astype(np.uint8)
+        
+        img = Image.fromarray(mel_norm).convert('RGB')
+        img.save(spec_path)
 
-        fig = plt.figure(figsize=(3, 3))
-        plt.axis('off')
-        librosa.display.specshow(mel_db, sr=sr, fmax=8000)
-        fig.savefig(spec_path, bbox_inches='tight', pad_inches=0, dpi=80)
-        plt.close(fig)
-
-        img = Image.open(spec_path).convert('RGB')
         input_tensor = img_transforms(img).unsqueeze(0)
 
         with torch.no_grad():
@@ -287,21 +275,18 @@ def analyze_audio(audio_path, language):
         confidence = prob_dict[top_disease] * 100
 
         result_text = f"🚨 {top_disease} ({confidence:.1f}% Confidence Match)"
-        
         why_text = reasons_dict.get(
             top_disease, 
             "The acoustic frequency distribution closely aligns with the sound markers of this condition."
         )
-        
         cta_text = lang_dict["info_bot_cta"]
 
-        del signal, mel, mel_db, input_tensor, outputs, probs
+        del signal, mel, mel_db, mel_norm, img, input_tensor, outputs, probs
         gc.collect()
 
         return result_text, why_text, cta_text, spec_path, prob_dict
 
     except Exception as e:
-        plt.close('all')
         gc.collect()
         return f"Error: {str(e)}", "", "", None, {}
 
@@ -323,7 +308,7 @@ def change_language(selected_lang):
     ]
 
 # -------------------------------------------------------------
-# 5. UI LAYOUT & ATTACHMENTS
+# 5. UI LAYOUT & PARTNER LINKS
 # -------------------------------------------------------------
 with gr.Blocks(theme=gr.themes.Soft(primary_hue="sky", neutral_hue="slate"), css=custom_css, title="StethoLogic") as demo:
     with gr.Row():

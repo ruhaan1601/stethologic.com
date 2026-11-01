@@ -1,0 +1,9 @@
+torch==2.4.1 --extra-index-url https://download.pytorch.org/whl/cpu
+torchvision==0.19.1 --extra-index-url https://download.pytorch.org/whl/cpu
+gradio==4.44.0
+librosa
+matplotlib
+numpy
+soundfile
+requests
+Pillow

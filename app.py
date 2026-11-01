@@ -364,4 +364,9 @@ with gr.Blocks(theme=gr.themes.Soft(primary_hue="sky", neutral_hue="slate"), css
     )
 
 port = int(os.environ.get("PORT", 7860))
-demo.launch(server_name="0.0.0.0", server_port=port)
+demo.queue().launch(
+    server_name="0.0.0.0",
+    server_port=port,
+    prevent_thread_lock=False,
+    show_error=True
+)

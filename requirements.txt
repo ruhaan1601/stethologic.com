@@ -1,12 +1,13 @@
-torch
-torchvision
-gradio
-pydantic
-huggingface_hub
+torch --index-url https://download.pytorch.org/whl/cpu
+torchvision --index-url https://download.pytorch.org/whl/cpu
+gradio==4.44.0
+fastapi==0.112.2
+starlette==0.38.2
+pydantic<2.8.0
+huggingface_hub<0.25.0
 librosa
 soundfile
 requests
 Pillow
 uvicorn
-fastapi
 google-generativeai

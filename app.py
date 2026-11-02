@@ -363,10 +363,13 @@ with gr.Blocks(theme=gr.themes.Soft(primary_hue="sky", neutral_hue="slate"), css
         outputs=[result_box, why_box, cta_box, spec_output, confidence_labels]
     )
 
-port = int(os.environ.get("PORT", 7860))
-demo.queue().launch(
-    server_name="0.0.0.0",
-    server_port=port,
-    prevent_thread_lock=False,
-    show_error=True
-)
+import os
+import uvicorn
+from fastapi import FastAPI
+
+port = int(os.environ.get("PORT", 10000))
+fastapi_app = FastAPI()
+fastapi_app = gr.mount_gradio_app(fastapi_app, demo, path="/")
+
+if __name__ == "__main__":
+    uvicorn.run(fastapi_app, host="0.0.0.0", port=port)
